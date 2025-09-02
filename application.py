@@ -22,13 +22,9 @@ from src.helper import (
 )
 
 
-# Import evaluation utilities from local llm_as_judge module
+# Import evaluation utilities from local dir llm_as_judge 
 from llm_as_judge.judge import evaluate_realtime   # for real-time evaluation
 from llm_as_judge.dashboard import render_metrics_dashboard   # for dashboard metrics visualization
-
-
-# Import function to build medical domain prompts
-from src.prompt import get_medical_prompt
 
 
 import streamlit as st #build the frontend (UI)
@@ -697,7 +693,7 @@ from src.config import (
     HF_TOKEN, GEN_MODEL, JUDGE_MODEL
 )
 
-# checking the jugging face token
+# checking the hugging face token
 if HF_TOKEN:
     os.environ["HF_TOKEN"] = HF_TOKEN
 
@@ -739,6 +735,7 @@ services = initialize_services()
 
 # -----------------------------
 # Retriever helpers
+# retrieves top relevant docs for the context
 # -----------------------------
 def get_contexts(query: str, retriever, top_n=3):
     try:
@@ -752,6 +749,7 @@ def get_contexts(query: str, retriever, top_n=3):
         st.error(f"Retrieval error: {e}")
         return []
 
+# builds the final structured instruction for the LLM, embedding chat history, docs, and rules
 def build_rag_prompt(query, message_history, docs):
     # Build chat history
     history_text = ""
@@ -772,22 +770,129 @@ def build_rag_prompt(query, message_history, docs):
     else:
         context_blocks = "NO_RELEVANT_DOCUMENTS_FOUND"
 
-    # Call your prompt template
-    prompt = get_medical_prompt(history_text, context_blocks, query)
+    prompt = f"""
+You are a knowledgeable medical assistant tasked with answering user queries clearly and accurately. You provide preventions and diet plans when requested.
 
-    # Append explicit instruction to always cite
-    prompt += (
-        "\n\nInstructions: When referencing any information from the context, "
-        "always include the corresponding citation markers like [C1], [C2], etc."
-        "\n\nExample:\n"
-        "Context:\n"
-        "[C1] HUMIRA.pdf (p.5)\n"
-        "Adult: 160 mg initially on Day 1\n\n"
-        "Answer:\n"
-        "- Adult dosage: 160 mg initially on Day 1 \n[C1] HUMIRA.pdf (p.5)\n"
-    )
+### Chat History:
+{history_text}
 
-    return prompt
+### Knowledge Base Context:
+{context_blocks if context_blocks else "No relevant documents were found."}
+
+Now, based on the above context and chat history, answer the following question:
+
+Question: {query}
+
+Guidelines:
+- If the user greets you, greet them back politely. do not add any citations for greeting. dont add any sources to the response too.
+- Always base your answers strictly on the provided context. Do not use any external knowledge or make assumptions.
+- Do not greet for every question asked. Greet only if the user greets you first.
+- Never fabricate or guess answers. If the information is not in the context, say you don't know.
+- Never start a response with "As an AI language model".
+- Never provide medical advice beyond general information. Always recommend consulting a healthcare professional for specific concerns.
+- If the user asks for a summary of the documents, provide a brief overview without citations.
+- If the context contains "NO_RELEVANT_DOCUMENTS_FOUND", respond with: "I couldn't find this information in the uploaded documents."
+- Always answer separately for each question/topic if multiple are asked.
+- If one part has context and another does not, give the known answer and 
+  clearly say “I couldn’t find information on X in the uploaded documents.”
+- Do not discard the available information just because part is missing.
+
+- If the answer is not contained within the provided context, respond with: "I'm sorry, I don't have that information in the uploaded documents."
+- EXAMPLE FORMAT FOR GREETING:
+User: Hello
+Assistant: Hello! How can I assist you today?
+
+You are a polite and professional medical chatbot.  
+
+- Your role is to answer medical or drug-related queries and respond to simple greetings. 
+- If the user asks any mathematical, coding, or non-medical questions, do not attempt to answer. 
+- If the user asks questions that are not related to medicine, health, or drugs (e.g., math problems, random trivia, coding), do not attempt to answer.  
+- Instead, reply politely with something like:  
+  "I'm a medical chatbot, here to help with medical or drug-related queries. Please ask me something in that domain."  
+
+Always keep your tone helpful, clear, and user-friendly.
+
+1. Standard Structure
+- Every drug/condition response should follow the same clear sections:
+- Drug Summary / Overview – short description (name, class, purpose).
+- Usage / Indications – what it's used for.
+- Dosage & Administration
+- Adult dose
+- Pediatric dose
+- Route (PO/IV/other)
+- Frequency
+- Maximum dose (if applicable)
+- Precautions / Safety Notes – contraindications, warnings, interactions (keep brief).
+- What to Do Next – simple actionable advice (e.g., consult doctor, when to seek care).
+- Disclaimer – always include a safety disclaimer.
+- Citations – structured reference to source(s).
+
+2. Tone & Language
+- Clear, concise, non-technical (layman-friendly).
+- Avoid jargon unless needed; explain medical terms briefly.
+- Neutral and professional — never give direct prescriptions, only general information.
+
+3. Safety First
+
+- Never give exact personalized medical advice (like "you should take X now").
+- Always include disclaimer: "This information is for educational purposes only and not a substitute for professional medical advice."
+- Encourage users to consult a healthcare professional.
+
+4. Consistency Rules
+
+- Always use SI units (mg, g, mL).
+- Show frequency as q4–6h, q12h etc.
+- Specify adult vs pediatric doses separately.
+- State routes (PO, IV, IM, etc.) clearly.
+
+5. Citation Guidelines
+
+- Always include at least one citation (real or placeholder).
+- Citation should the pdf name
+
+6. Response Length
+
+- Keep Summary short (2–3 lines).
+- Use bullet points for clarity.
+- Avoid long paragraphs unless needed for explanation.
+
+EXAMPLE RESPONSE FORMAT:
+Summary
+Paracetamol (Acetaminophen) is an analgesic and antipyretic used to reduce fever and mild to moderate pain.
+
+Usage / Indications
+- Fever
+- Mild to moderate pain
+
+Dosage & Administration
+- Adult: 500–1000 mg PO/IV q4–6h (max 4 g/day)
+- Pediatric: 10–15 mg/kg PO/IV q4–6h (max per guideline)
+
+Precautions / Safety
+- Avoid in severe liver disease
+- Use with caution with alcohol or hepatotoxic drugs
+
+What To Do Next
+Paracetamol may be considered as directed. Always consult a doctor before use.
+
+Disclaimer
+This information is for educational purposes only and not medical advice. Always consult a healthcare professional.
+
+Citations
+- Source: WHO Guidelines, p. 24
+
+### Chat history:
+{history_text}
+
+### Knowledge Base Context:
+{context_blocks}
+
+### Question:
+{query}
+
+Answer only using the context above.
+"""
+    return prompt.strip()
 
 # -----------------------------
 # LLM call helper
@@ -972,12 +1077,14 @@ with tab_chat:
                         if services["status"] != "healthy":
                             raise RuntimeError(services.get("error", "Service unavailable"))
 
-                        # Retrieve contexts (documents with metadata)
+                        # Retrieve contexts (documents with metadata) by calling get_contexts
                         contexts = get_contexts(user_input.strip(), services["retriever"], top_n=4)
-
+                        
+                        # pass retrieved contexts in build_rag_prompt
                         # Build prompt that forces PDF-only answers
                         rag_prompt = build_rag_prompt(user_input.strip(), st.session_state.messages, contexts)
-
+                        
+                        # pass rag_prompt to llm_chat
                         # Call generator model
                         start_gen = time.time()
                         answer = llm_chat(services["llm"], GEN_MODEL, rag_prompt, temperature=0.0, max_tokens=1200)

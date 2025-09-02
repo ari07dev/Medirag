@@ -12,7 +12,11 @@ logs/
 
 # Virtual environment
 venv/
+medibot/
 Lib/
 medibot/Lib/
 rag/Lib/
 .venv/
+
+# file
+application_ref_copy.py/
